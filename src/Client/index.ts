@@ -3,6 +3,7 @@ import type { BaileysEventMap } from "baileys";
 import Pino from "pino";
 import path from "path";
 import * as glob from "glob";
+import qrcode from "qr-image";
 import fs from "fs";
 
 import {
@@ -203,7 +204,8 @@ export default class ShardManager extends EventEmitter {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        this.emit("login.update", { shardId: id, state: "connecting", type: "qr", code: qr });
+        const image = qrcode.imageSync(qr, { type: "png", size: 10, margin: 1 });
+        this.emit("login.update", { shardId: id, state: "connecting", type: "qr", image });
       }
 
       if (connection === "open") {
