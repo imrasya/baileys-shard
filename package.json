@@ -14,7 +14,7 @@
   "scripts": {
     "test": "node /test/test.js",
     "clean": "rm -rf dist && echo '\n\nDist directory has been cleaned.\n\n'",
-    "build": "tsup"
+    "build": "tsup",
     "prepare": "npm run build"
   },
   "repository": {
