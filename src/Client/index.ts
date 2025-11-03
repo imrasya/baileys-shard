@@ -279,7 +279,7 @@ export default class ShardManager extends EventEmitter {
   async createShard(options: ShardOptions = {}): Promise<{ id: string; sock: any }> {
     try {
       const baileys = await import("baileys");
-      const { default: makeWASocket, useMultiFileAuthState } = baileys;
+      const { makeWASocket, useMultiFileAuthState } = baileys;
   
       const currentShard = this.#shards.size;
       const id = options?.id || `shard-${currentShard + 1}`;
