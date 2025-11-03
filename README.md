@@ -110,10 +110,16 @@ To install ShardManager, you can use
      session: "./sessions"
    });
 
-   // Listen connection updates
-   manager.on("login.update", ({ shardId, state, type, code, image }) => {
-     if (type === "pairing") {
-       console.log(`Pairing code for ${shardId}: ${code}`);
+   // Listen connection updates (QR & Pairing via events)
+   import qrcode from "qrcode-terminal";
+   manager.on("login.update", ({ shardId, state, type, code }) => {
+     if (state === "connecting") {
+       if (type === "qr" && code) {
+         console.log(`📱 QR untuk ${shardId} — scan di ponsel:`);
+         qrcode.generate(code, { small: true });
+       } else if (type === "pairing" && code) {
+         console.log(`🔗 Pairing code untuk ${shardId}: ${code}`);
+       }
      } else if (state === "connected") {
        console.log(`${shardId} successfully connected!`);
      }
@@ -199,9 +205,9 @@ for (let i = 1; i <= 10; i++) {
    const { id, sock } = await manager.createShard({
      id: "my-custom-bot",
      phoneNumber: "6281234567890",
+     // Tidak perlu printQRInTerminal. Tangani QR & Pairing di event "login.update".
      socket: {
-       printQRInTerminal: true,
-       // other baileys socket options
+       // opsi baileys lainnya
      }
    });
    ```
@@ -300,10 +306,11 @@ for (let i = 1; i <= 10; i++) {
    [Back to the Table of contents](#table-of-contents)
 
 - ## validateAndCleanSession()
-   Validate session and auto-cleanup if corrupt, but protect registered sessions.
+   Validasi sesi dan auto-cleanup jika korup atau invalid, dengan logika proteksi sesi.
 
    ```js
-   // Will only clean if session is corrupt or not registered
+   // Membersihkan hanya jika: JSON korup, atau sesi terdaftar namun invalid.
+   // Sesi yang belum terdaftar (registered=false) tidak dihapus otomatis saat reconnect.
    await manager.validateAndCleanSession("./sessions/my-bot");
    ```
    | Param | Require | Type | Description |  
@@ -450,15 +457,16 @@ ShardManager automatically forwards all Baileys events with additional `shardId`
 Handle connection state changes for each shard:
 
 ```js
-manager.on("login.update", ({ shardId, state, type, code, image }) => {
+const qrcode = require("qrcode-terminal");
+
+manager.on("login.update", ({ shardId, state, type, code }) => {
   switch (state) {
     case "connecting":
-      if (type === "qr") {
-        console.log(`QR Code ready for ${shardId}`);
-        // `image` contains QR code buffer
-        fs.writeFileSync(`./qr-${shardId}.png`, image);
-      } else if (type === "pairing") {
-        console.log(`Pairing code for ${shardId}: ${code}`);
+      if (type === "qr" && code) {
+        console.log(`📱 QR siap untuk ${shardId}`);
+        qrcode.generate(code, { small: true });
+      } else if (type === "pairing" && code) {
+        console.log(`🔗 Pairing code untuk ${shardId}: ${code}`);
       }
       break;
       
@@ -467,7 +475,7 @@ manager.on("login.update", ({ shardId, state, type, code, image }) => {
       break;
       
     case "disconnected":
-      console.log(`⚠️ ${shardId} disconnected, will reconnect...`);
+      console.log(`⚠️ ${shardId} disconnected, akan mencoba reconnect (guard mencegah duplikasi)`);
       break;
       
     case "logged_out":
@@ -486,8 +494,7 @@ manager.on("login.update", ({ shardId, state, type, code, image }) => {
 | shardId | `string` | ID of shard experiencing update |
 | state | `string` | Connection state: "connecting", "connected", "disconnected", "logged_out", "creds_saved" |
 | type | `string` | Auth type: "qr" or "pairing" (only when connecting) |
-| code | `string` | Pairing code (only when type: "pairing") |
-| image | `Buffer` | QR code image buffer (only when type: "qr") |
+| code | `string` | QR string (when type="qr") or pairing code (type="pairing") |
 
 [Back to the Table of contents](#table-of-contents)
 
