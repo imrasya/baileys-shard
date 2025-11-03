@@ -204,8 +204,8 @@ export default class ShardManager extends EventEmitter {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        const image = qrcode.imageSync(qr, { type: "png", size: 10, margin: 1 });
-        this.emit("login.update", { shardId: id, state: "connecting", type: "qr", image });
+        logger.info(`qr code received: ${qr}`);
+        this.emit("login.update", { shardId: id, state: "connecting", type: "qr", qr });
       }
 
       if (connection === "open") {
