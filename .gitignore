@@ -2,6 +2,8 @@
 dist
 *.js
 bot.ts
+bot(2).ts
+baileys_auth_info
 
 # dependencies
 node_modules
