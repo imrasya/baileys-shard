@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import type { BaileysEventMap } from "baileys";
+import type { BaileysEventMap } from "wileys";
 import Pino from "pino";
 import path from "path";
 import * as glob from "glob";
@@ -82,19 +82,19 @@ export default class ShardManager extends EventEmitter {
       try {
         creds = JSON.parse(raw);
       } catch (e) {
-        return { 
-          exists: true, 
-          registered: false, 
-          valid: false, 
-          reason: "Corrupt JSON" 
+        return {
+          exists: true,
+          registered: false,
+          valid: false,
+          reason: "Corrupt JSON"
         };
       }
 
       const isRegistered = creds?.registered === true;
-      
+
       const requiredFields = [
         "noiseKey",
-        "pairingEphemeralKeyPair", 
+        "pairingEphemeralKeyPair",
         "signedIdentityKey",
         "signedPreKey",
       ];
@@ -106,13 +106,13 @@ export default class ShardManager extends EventEmitter {
         valid: isRegistered && hasRequiredFields,
         reason: !hasRequiredFields ? "Missing required fields" : undefined
       };
-      
+
     } catch (err) {
-      return { 
-        exists: true, 
-        registered: false, 
-        valid: false, 
-        reason: `Check error: ${err}` 
+      return {
+        exists: true,
+        registered: false,
+        valid: false,
+        reason: `Check error: ${err}`
       };
     }
   }
@@ -120,7 +120,7 @@ export default class ShardManager extends EventEmitter {
   async validateAndCleanSession(sessionDirectory: string): Promise<void> {
     try {
       const status = await this.checkSessionStatus(sessionDirectory);
-      
+
       if (status.valid && status.registered) {
         logger.info(`Session is valid and registered, keeping: ${sessionDirectory}`);
         return;
@@ -136,7 +136,7 @@ export default class ShardManager extends EventEmitter {
           logger.info(`Session kept (registered=${status.registered}, valid=${status.valid}): ${sessionDirectory}`);
         }
       }
-      
+
     } catch (err) {
       logger.error(`validateAndCleanSession error: ${err}`);
       if (fs.existsSync(sessionDirectory)) {
@@ -169,7 +169,7 @@ export default class ShardManager extends EventEmitter {
       })
     );
 
-    const forwardEvents: Array<String> = [
+    const forwardEvents: string[] = [
       "messages.upsert",
       "messages.update",
       "messages.delete",
@@ -191,8 +191,8 @@ export default class ShardManager extends EventEmitter {
     ];
 
     for (const ev of forwardEvents) {
-      sock.ev.on(ev as keyof BaileysEventMap, (data: any) => {
-        this.emit(ev as keyof BaileysEventMap, { shardId: id, sock, data });
+      sock.ev.on(ev as any, (data: any) => {
+        this.emit(ev as any, { shardId: id, sock, data });
       });
     }
 
@@ -221,8 +221,9 @@ export default class ShardManager extends EventEmitter {
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const baileys = await import("baileys");
-        const shouldReconnect = statusCode !== baileys.DisconnectReason.loggedOut;
+        const baileysImport = await import("wileys");
+        const DisconnectReason = (baileysImport as any).DisconnectReason || (baileysImport as any).default?.DisconnectReason;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
         if (!shouldReconnect) {
           logger.warn(`Session ${id} logged out, clearing session...`);
@@ -286,13 +287,24 @@ export default class ShardManager extends EventEmitter {
 
   async createShard(options: ShardOptions = {}): Promise<{ id: string; sock: any }> {
     try {
-      const baileys = await import("baileys");
-      const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = baileys;
-  
+      const baileysImport = await import("wileys");
+      const baileys = (baileysImport as any).default || baileysImport;
+      const makeWASocket = baileys.makeWASocket || baileys.default || baileys;
+
+      // Ambil utility lain yang dibutuhkan
+      const {
+        useMultiFileAuthState,
+        fetchLatestBaileysVersion,
+        makeCacheableSignalKeyStore,
+        makeInMemoryStore,
+        jidNormalizedUser,
+        getAggregateResponsesInEventMessage
+      } = baileys;
+
       const currentShard = this.#shards.size;
       const id = options?.id || `shard-${currentShard + 1}`;
       const sessionDirectory = path.join(this.#sessionDirectory, id);
-  
+
       if (this.#shards.has(id)) {
         const existingShardInfo = this.#shardsInfo.get(id);
         if (existingShardInfo?.status === "connected" || existingShardInfo?.status === "initializing") {
@@ -300,9 +312,9 @@ export default class ShardManager extends EventEmitter {
           return { id, sock: this.#shards.get(id) };
         }
       }
-  
+
       const sessionStatus = await this.checkSessionStatus(sessionDirectory);
-  
+
       if (sessionStatus.registered && sessionStatus.valid) {
         logger.info(`Session ${id} is already registered and valid, reusing existing session`);
       } else if (sessionStatus.exists && !sessionStatus.valid) {
@@ -311,7 +323,7 @@ export default class ShardManager extends EventEmitter {
       } else if (!sessionStatus.exists) {
         logger.info(`Creating new session for ${id}`);
       }
-  
+
       let { state, saveCreds } = await useMultiFileAuthState(sessionDirectory);
       if (state.creds?.registered === true) {
         logger.info(`Using existing registered session for ${id}`);
@@ -321,6 +333,10 @@ export default class ShardManager extends EventEmitter {
 
       const { version } = await fetchLatestBaileysVersion();
 
+      // Setup Store untuk mapping LID -> JID dan Message retrieval
+      const store = makeInMemoryStore({ logger });
+      // Bisa tambahkan logic readFromFile/writeToFile jika perlu persistensi store
+
       const sock = makeWASocket({
         version,
         auth: {
@@ -329,8 +345,51 @@ export default class ShardManager extends EventEmitter {
         },
         logger,
         ...options?.socket,
+        // Helper untuk mendapatkan pesan dari store (diperlukan untuk retry/poll)
+        getMessage: async (key: any) => {
+          if (store) {
+            const msg = await store.loadMessage(key.remoteJid, key.id)
+            return msg?.message || undefined
+          }
+          return { conversation: 'hello' }
+        }
       });
-  
+
+      // Bind store ke event socket
+      store.bind(sock.ev);
+
+      // Tambahkan helper getJid ke object sock
+      (sock as any).getJid = (id: string) => {
+        const jid = jidNormalizedUser(id);
+        if (jid.includes('@lid')) {
+          // Coba cari di contacts store
+          const contact = store.contacts[jid] || Object.values(store.contacts).find((c: any) => c.lid === jid);
+          if (contact && contact.id) {
+            return contact.id.split(':')[0] + '@s.whatsapp.net'; // Ensure format standar
+          }
+        }
+        return jid;
+      };
+
+      // Listener khusus untuk event responses (Dekripsi Event)
+      sock.ev.on("messages.update", async (chatUpdates: any[]) => {
+        for (const chatUpdate of chatUpdates) {
+          const eventResponses = chatUpdate.update?.eventResponses;
+          if (eventResponses) {
+            try {
+              const aggregate = getAggregateResponsesInEventMessage(
+                { eventResponses },
+                jidNormalizedUser(sock.user?.id || sock.user?.lid)
+              );
+              this.emit("event.response", { shardId: id, aggregate });
+            } catch (e) {
+              logger.error(`Error decrypting event response: ${e}`);
+            }
+          }
+        }
+      });
+
+
       this.setupShardEventHandlers(sock, id, saveCreds, options);
       return { id, sock };
     } catch (err: any) {
@@ -340,10 +399,10 @@ export default class ShardManager extends EventEmitter {
     }
   }
 
-  async recreateShard(options: { 
-    id: string; 
-    clearSession?: boolean; 
-    retryCount?: number; 
+  async recreateShard(options: {
+    id: string;
+    clearSession?: boolean;
+    retryCount?: number;
     forceRecreate?: boolean;
   } & Partial<ShardOptions>): Promise<{ id: string; sock: any }> {
     const {
@@ -351,13 +410,13 @@ export default class ShardManager extends EventEmitter {
       clearSession = false,
       retryCount = 0,
       forceRecreate = false,
-      ...restOptions 
+      ...restOptions
     } = options;
     const maxRetries = 3;
-  
+
     try {
       const sessionDirectory = path.join(this.#sessionDirectory, id);
-  
+
       if (!forceRecreate && !clearSession) {
         const sessionStatus = await this.checkSessionStatus(sessionDirectory);
         if (sessionStatus.registered && sessionStatus.valid) {
@@ -377,7 +436,7 @@ export default class ShardManager extends EventEmitter {
           return await this.createShard({ id, ...restOptions });
         }
       }
-  
+
       const oldSock = this.#shards.get(id);
       if (oldSock) {
         try {
@@ -389,7 +448,7 @@ export default class ShardManager extends EventEmitter {
         this.#shards.delete(id);
         this.#shardsInfo.delete(id);
       }
-  
+
       if (clearSession) {
         if (fs.existsSync(sessionDirectory)) {
           fs.rmSync(sessionDirectory, { recursive: true, force: true });
@@ -398,9 +457,9 @@ export default class ShardManager extends EventEmitter {
       } else {
         // Saat reconnect normal, jangan bersihkan sesi — biarkan proses registrasi berjalan
       }
-  
+
       await new Promise((r) => setTimeout(r, 2000));
-  
+
       return await this.createShard({ id, ...restOptions });
     } catch (err: any) {
       if (retryCount < maxRetries) {
@@ -412,7 +471,7 @@ export default class ShardManager extends EventEmitter {
           clearSession: retryCount >= 2,
         });
       }
-  
+
       const shardErr = new ShardError(
         `Failed to recreate shard after ${maxRetries} attempts: ${err.message}`,
         "RECREATE_FAILED"
@@ -431,7 +490,7 @@ export default class ShardManager extends EventEmitter {
     const sessionDirectory = path.join(this.#sessionDirectory, id);
     return await this.checkSessionStatus(sessionDirectory);
   }
-    
+
   async connect(id: string): Promise<{ id: string; sock: any }> {
     return wrapShardError(this.recreateShard.bind(this), id, "CONNECT_FAILED")({ id });
   }
